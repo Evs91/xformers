@@ -1,0 +1,218 @@
+name: Windows Nightly Build
+
+on:
+  push:
+    branches:
+      - 'nightly'
+      - 'main'
+    paths:
+      - 'third_party/**'
+      - 'xformers/csrc/**'
+      - '.github/workflows/**'
+      - 'setup.py'
+      - 'requirements*.txt'
+  pull_request:
+    branches:
+      - 'nightly'
+      - 'main'
+    paths:
+      - 'third_party/**'
+      - 'xformers/csrc/**'
+      - '.github/workflows/**'
+      - 'setup.py'
+      - 'requirements*.txt'
+  #schedule:
+    # Run nightly at 2 AM UTC
+    #- cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+env:
+  FORCE_CUDA: 1
+  MAX_JOBS: 6
+  DISTUTILS_USE_SDK: 1
+  XFORMERS_BUILD_TYPE: "Release"
+  TMPDIR: "./x"
+  CUDA_ARCH: "8.0 8.6 8.9 9.0 10.0 12.0"
+  TORCH_CUDA_ARCH_LIST: "8.0 8.6 8.9 9.0 10.0 12.0"
+  PY: python
+
+jobs:
+  win_nightly_build:
+    name: 'Windows Nightly Build'
+    runs-on: windows-2022
+    timeout-minutes: 360
+    
+    
+    steps:
+    - name: 'Workarounds for longpaths - git-config'
+      run: |
+        git config --system core.longpaths true
+
+    - name: 'Recursive checkout'
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: 'Workarounds for longpaths - TMPDIR'
+      run: |
+        mkdir x
+        python -c "import tempfile; print(tempfile.gettempdir())"
+        python -c "import tempfile; assert(len(tempfile.gettempdir()) < 30)"
+
+    - name: 'HACKFIX for cutlass compiler bug'
+      run: |
+        REM See https://github.com/NVIDIA/cutlass/issues/1732
+        if exist third_party/cutlass/include/cutlass/gemm/kernel/sm90_gemm_tma_warpspecialized_pingpong.hpp del third_party/cutlass/include/cutlass/gemm/kernel/sm90_gemm_tma_warpspecialized_pingpong.hpp
+        echo. > third_party/cutlass/include/cutlass/gemm/kernel/sm90_gemm_tma_warpspecialized_pingpong.hpp
+      shell: cmd
+
+    - name: 'Setup Python 3.10'
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: 'Download CUDA 12.9 installer'
+      run: |
+        echo "Downloading CUDA 12.9 installer..."
+        curl -L -o cuda_12.9.1_576.57_windows.exe "https://developer.download.nvidia.com/compute/cuda/12.9.1/local_installers/cuda_12.9.1_576.57_windows.exe"
+
+    - name: 'Install CUDA 12.9 components'
+      run: |
+        echo "Installing CUDA 12.9..."
+        cuda_12.9.0_546.80_windows.exe -s ^
+          nvcc_12.9 ^
+          cudart_12.9 ^
+          curand_12.9 ^
+          curand_dev_12.9 ^
+          cublas_12.9 ^
+          cublas_dev_12.9 ^
+          cufft_12.9 ^
+          cufft_dev_12.9 ^
+          cusolversp_12.9 ^
+          cusolversp_dev_12.9 ^
+          cusolver_12.9 ^
+          cusolver_dev_12.9 ^
+          cusparse_12.9 ^
+          cusparse_dev_12.9 ^
+          npp_12.9 ^
+          npp_dev_12.9 ^
+          nvrtc_12.9 ^
+          nvrtc_dev_12.9 ^
+          nvml_dev_12.9
+        if %errorlevel% neq 0 exit /b %errorlevel%
+      shell: cmd
+
+    - name: 'Setup CUDA environment'
+      run: |
+        echo "Setting up CUDA environment variables..."
+        $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+        echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
+        echo "CUDA_PATH_V12_9=$cudaPath" >> $env:GITHUB_ENV
+        echo "$cudaPath\bin" >> $env:GITHUB_PATH
+        echo "$cudaPath\libnvvp" >> $env:GITHUB_PATH
+        
+        echo "Verifying CUDA installation..."
+        & "$cudaPath\bin\nvcc.exe" --version
+      shell: powershell
+      env:
+        TORCH_CUDA_ARCH_LIST: ${{ matrix.cuda_arch.arch }}
+
+    - name: 'Install Visual Studio Build Tools'
+      run: |
+        echo "Installing Visual Studio Build Tools..."
+        curl -L -o vs_buildtools.exe "https://aka.ms/vs/17/release/vs_buildtools.exe"
+        vs_buildtools.exe --quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows10SDK.20348
+        if %errorlevel% neq 0 exit /b %errorlevel%
+      shell: cmd
+
+    - name: 'Remove internal code'
+      run: |
+        New-Item -Path ".github/sync.fairinternal/" -ItemType Directory -Force
+        Set-Content -Path ".github/sync.fairinternal/ossify.sh" -Value @"
+        #!/bin/bash
+        # Placeholder ossify script
+        "@
+        # Run the script (placeholder)
+        Write-Host "Ossify script executed"
+      shell: powershell
+      if: always()
+
+    - name: 'Verify installation'
+      run: |
+        echo "Verifying installation..."
+        echo "Python version:"
+        python --version
+        
+        echo "NVCC version:"
+        nvcc --version
+        
+        echo "Visual Studio version:"
+        where cl.exe
+        cl.exe 2>&1 | findstr "Version"
+        
+        echo "Environment variables:"
+        echo CUDA_PATH=%CUDA_PATH%
+        echo CUDA_PATH_V12_9=%CUDA_PATH_V12_9%
+      shell: cmd
+
+    - name: 'Install nightly build dependencies'
+      run: |
+        echo "Installing PyTorch nightly 2.9.0 and dependencies..."
+        python -m pip install wheel setuptools ninja
+        python -m pip install --pre torch torchaudio torchvideo --index-url https://download.pytorch.org/whl/nightly/cu129
+        python -m pip install -r requirements.txt
+        git config --global --add safe.directory "*"
+        python -c "import torch; print('torch version:', torch.__version__)"
+        python -c "import torch; print('torch.cuda version:', torch.version.cuda)"
+        python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+        ninja --version
+      env:
+        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+
+    - name: 'Create sdist'
+      run: |
+        python setup.py sdist
+      env:
+        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+
+    - name: 'Build from sdist'
+      run: |
+        python -m pip install -v --no-build-isolation dist/*
+      env:
+        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+
+    - name: 'Test installation'
+      run: |
+        python -c "import xformers; print('xformers version:', xformers.__version__)"
+        python -c "import torch; import xformers; print('xformers ops available:', hasattr(xformers, 'ops'))"
+      env:
+        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+
+    - name: 'Info'
+      run: |
+        cd ../../
+        python -m xformers.info
+      env:
+        XFORMERS_MORE_DETAILS: 1
+        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+
+    - name: 'Upload build artifacts'
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: xformers-nightly-${{ matrix.cuda_arch.name }}-${{ github.run_number }}
+        path: |
+          dist/*
+          build/
+        retention-days: 7
+
+    # Uncomment for debugging failed builds
+    # - name: 'Debug on failure'
+    #   if: failure()
+    #   run: |
+    #     Write-Host "Nightly build failed. Check logs above for details."
+    #     Write-Host "PyTorch version: $(python -c 'import torch; print(torch.__version__)')"
+    #     Write-Host "CUDA version: $(nvcc --version)"
+    #     # Add any debugging steps here
+    #   shell: powershell
