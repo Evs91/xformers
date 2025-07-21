@@ -168,26 +168,26 @@ jobs:
         python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
         ninja --version
       env:
-        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+        TORCH_CUDA_ARCH_LIST: ${{ env.TORCH_CUDA_ARCH_LIST }}
 
     - name: 'Create sdist'
       run: |
         python setup.py sdist
       env:
-        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+        TORCH_CUDA_ARCH_LIST: ${{ env.TORCH_CUDA_ARCH_LIST }}
 
     - name: 'Build from sdist'
       run: |
         python -m pip install -v --no-build-isolation dist/*
       env:
-        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+        TORCH_CUDA_ARCH_LIST: ${{ env.TORCH_CUDA_ARCH_LIST }}
 
     - name: 'Test installation'
       run: |
         python -c "import xformers; print('xformers version:', xformers.__version__)"
         python -c "import torch; import xformers; print('xformers ops available:', hasattr(xformers, 'ops'))"
       env:
-        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+        TORCH_CUDA_ARCH_LIST: ${{ env.TORCH_CUDA_ARCH_LIST }}
 
     - name: 'Info'
       run: |
@@ -195,13 +195,13 @@ jobs:
         python -m xformers.info
       env:
         XFORMERS_MORE_DETAILS: 1
-        TORCH_CUDA_ARCH_LIST: ${{ TORCH_CUDA_ARCH_LIST }}
+        TORCH_CUDA_ARCH_LIST: ${{ env.TORCH_CUDA_ARCH_LIST }}
 
     - name: 'Upload build artifacts'
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: xformers-nightly-${{ matrix.cuda_arch.name }}-${{ github.run_number }}
+        name: xformers-nightly-${{ env.cuda_arch.name }}-${{ github.run_number }}
         path: |
           dist/*
           build/
